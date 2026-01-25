@@ -4,3 +4,4 @@ requests
 apscheduler
 pytz
 flask
+pymongo[srv]
