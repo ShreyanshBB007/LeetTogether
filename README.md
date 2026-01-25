@@ -136,17 +136,17 @@ Keep your streak alive! 🔥
 - Highlights best performer of the week
 - Includes current streak, longest streak, and total days
 
-### ⏱️ Hourly Submission Monitoring
+### ⚡ Near-Instant Submission Announcements
 
-- Runs every hour
+- Checks for new submissions **every 5 minutes**
 - Detects new accepted submissions only
 - Uses timestamp-based deduplication
-- Groups multiple solves into a single announcement
+- Announces as soon as someone solves a problem
 
 **Example:**
 
 ```
-🔥 Shreyansh solved 3 problems this hour!
+🔥 @Shreyansh solved 3 problem(s)!
 - Two Sum
 - Binary Search
 - Valid Parentheses
@@ -169,6 +169,7 @@ Currently uses JSON-based storage:
 - `users.json` - User registration data
 - `streak.json` - Streak tracking data
 - `hourly_announcements.json` - Submission tracking
+- `config.json` - Bot configuration (announcement channel, etc.)
 
 This keeps the system simple while remaining restart-safe.
 
@@ -253,8 +254,11 @@ LeetTogether aims to become:
 | `!streak` | View your current streak, longest streak, and total days |
 | `!today` | See today's solves with difficulty and links |
 | `!profile [@user]` | View detailed profile (yours or another user's) |
+| `!progress` | View today's progress for ALL registered users |
+| `!users` | List all registered users |
 | `!leaderboard` | View today's solve count leaderboard |
 | `!streakboard` | View streak leaderboard |
+| `!setchannel #channel` | Set announcement channel (Admin only) |
 | `!hello` | Greet the bot |
 | `!ping` | Check bot responsiveness |
 
@@ -292,12 +296,31 @@ Today's Problems:
 🔴 Hard — Median of Two Sorted Arrays at 16:45
 ```
 
+### Example: `!progress`
+
+```
+📊 Today's Progress (January 25, 2026)
+
+1. @Shreyansh — 3 problem(s)
+   🟢 Two Sum (Easy) at 10:30
+   🟡 3Sum (Medium) at 14:15
+   🔴 Merge K Lists (Hard) at 18:45
+
+2. @John — 1 problem(s)
+   🟡 Valid Parentheses (Medium) at 12:00
+
+3. @Jane — ❌ Not solved yet
+
+---
+Total: 4 problem(s) solved by 2/3 users
+```
+
 ## ⏰ Scheduled Jobs
 
 | Job | Schedule | Description |
 |-----|----------|-------------|
 | Daily Check | 11:59 PM IST | Announces who solved/didn't solve |
 | Streak Update | 11:58 PM IST | Updates streaks for all users |
-| Hourly Announcements | Every hour | Announces new solves |
+| Submission Check | Every 5 minutes | Announces new solves (near-instant) |
 | Smart Nudges | 9:00 PM IST | DMs users who haven't solved |
 | Weekly Recap | Sundays 10 PM IST | Posts weekly leaderboard |
