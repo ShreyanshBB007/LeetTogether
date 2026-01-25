@@ -307,6 +307,64 @@ def get_today_solved_with_difficulty(username):
     
     return problems
 
+def get_today_stats(username):
+    """Get today's stats: unique problems, total submissions, difficulty breakdown"""
+    submissions = fetch_recent_submissions(username)
+    
+    if not submissions:
+        return {"unique": 0, "submissions": 0, "easy": 0, "medium": 0, "hard": 0}
+    
+    previously_solved = get_problems_solved_before_today(username)
+    
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).date()
+    
+    unique_problems = set()
+    total_submissions = 0
+    easy = 0
+    medium = 0
+    hard = 0
+    
+    for s in submissions:
+        if s["statusDisplay"] != "Accepted":
+            continue
+        
+        ts = int(s["timestamp"])
+        time = datetime.utcfromtimestamp(ts).replace(tzinfo=pytz.utc).astimezone(ist)
+        
+        if time.date() != today:
+            continue
+        
+        title_slug = s.get("titleSlug", "")
+        
+        # Skip if already solved before today
+        if title_slug in previously_solved:
+            continue
+        
+        # Count all submissions today
+        total_submissions += 1
+        
+        # Only count unique problems for difficulty
+        if title_slug not in unique_problems:
+            unique_problems.add(title_slug)
+            details = fetch_problem_details(title_slug)
+            if details:
+                diff = details.get("difficulty", "Unknown")
+                if diff == "Easy":
+                    easy += 1
+                elif diff == "Medium":
+                    medium += 1
+                elif diff == "Hard":
+                    hard += 1
+    
+    return {
+        "unique": len(unique_problems),
+        "submissions": total_submissions,
+        "easy": easy,
+        "medium": medium,
+        "hard": hard
+    }
+
 def get_difficulty_breakdown(username):
     """Get difficulty breakdown of all solved problems"""
     stats = fetch_user_stats(username)

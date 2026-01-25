@@ -12,7 +12,8 @@ from leetcode_logic import (
     get_today_solved_with_difficulty,
     get_difficulty_breakdown,
     get_user_ranking,
-    fetch_problem_details
+    fetch_problem_details,
+    get_today_stats
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
@@ -427,23 +428,42 @@ async def status(ctx):
 
 @bot.command()
 async def leaderboard(ctx):
+    """Show today's leaderboard with unique problems and submissions"""
     results = []
 
     for discord_id, lc_username in user_registry.items():
-        count = get_today_accepted_count(lc_username)
-        results.append((discord_id, count))
+        stats = get_today_stats(lc_username)
+        results.append((
+            discord_id,
+            stats["unique"],
+            stats["submissions"],
+            stats["easy"],
+            stats["medium"],
+            stats["hard"]
+        ))
 
-    results.sort(key=lambda x: x[1], reverse=True)
+    # Sort by unique problems first, then submissions as tiebreaker
+    results.sort(key=lambda x: (x[1], x[2]), reverse=True)
 
     if not results:
         await ctx.send("No registered users.")
         return  
 
-    msg = "🏆 **Today's Leaderboard**\n\n"
-    rank = 1
-    for discord_id, count in results:
-        msg += f"{rank}. <@{discord_id}> — **{count}** solved\n"
-        rank += 1
+    ist = pytz.timezone("Asia/Kolkata")
+    today_str = datetime.now(ist).strftime("%B %d, %Y")
+    
+    msg = f"🏆 **Today's Leaderboard** ({today_str})\n\n"
+    
+    medals = ["🥇", "🥈", "🥉"]
+    
+    for i, (discord_id, unique, submissions, easy, medium, hard) in enumerate(results[:10]):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        breakdown = f"🟢{easy} 🟡{medium} 🔴{hard}"
+        msg += f"{medal} <@{discord_id}> — **{unique}** problems solved ({submissions} submissions) | {breakdown}\n"
+
+    total_unique = sum(r[1] for r in results)
+    total_subs = sum(r[2] for r in results)
+    msg += f"\n---\n**Total today:** {total_unique} problems solved ({total_subs} submissions) by {len(results)} users"
 
     await ctx.send(msg)
 
@@ -717,7 +737,7 @@ async def weekly(ctx):
     
     total_unique = sum(r[1] for r in results)
     total_subs = sum(r[2] for r in results)
-    msg += f"\n---\n**Total this week:** {total_unique} unique problems ({total_subs} submissions) by {len(results)} users"
+    msg += f"\n---\n**Total this week:** {total_unique} problems solved ({total_subs} submissions) by {len(results)} users"
     
     await ctx.send(msg)
 
