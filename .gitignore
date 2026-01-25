@@ -1,24 +1,17 @@
-# Virtual environment
-.venv/
-venv/
-env/
+﻿# Data files (don't track live data)
+streak.json
+hourly_annoucements.json
+config.json
+weekly.json
 
-# Environment variables
+# Environment and secrets
 .env
 
 # Python cache
 __pycache__/
 *.pyc
-*.pyo
 
 # Logs
-*.log
 discord.log
 
-# IDE
-.vscode/
-.idea/
-
-# OS files
-.DS_Store
-Thumbs.db
+# Keep users.json tracked if you want, or add it here too
