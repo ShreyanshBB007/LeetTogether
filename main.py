@@ -23,15 +23,23 @@ from storage import (
     save_streak,
     get_default_streak_data,
     update_longest_streak,
-    remove_user
+    remove_user,
+    load_config,
+    save_config
 )
 from hourly_announcements import load_announcements, save_announcements
 import webserver
 
 user_registry = load_users()
 streak_registry = load_streak()
+bot_config = load_config()
 
-REPORT_CHANNEL_ID = 1461411340580032565
+# Default channel ID (will be overridden by !setchannel)
+DEFAULT_CHANNEL_ID = 1461411340580032565
+
+def get_announcement_channel_id():
+    """Get the configured announcement channel ID"""
+    return bot_config.get("announcement_channel_id", DEFAULT_CHANNEL_ID)
 
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
@@ -48,7 +56,7 @@ scheduler = AsyncIOScheduler()
 ist = pytz.timezone("Asia/Kolkata")
 
 async def daily_check():
-    channel = bot.get_channel(REPORT_CHANNEL_ID)
+    channel = bot.get_channel(get_announcement_channel_id())
 
     if channel is None:
         print("Channel not found")
@@ -67,7 +75,7 @@ async def daily_check():
 
 
 async def streak_update():
-    channel = bot.get_channel(REPORT_CHANNEL_ID)
+    channel = bot.get_channel(get_announcement_channel_id())
 
     if channel is None:
         print("Channel not found")
@@ -147,22 +155,26 @@ def sync_user_submissions(discord_id, leetcode_username):
 
     save_announcements(data)
 
-async def hourly_announcement_job():
-    channel = bot.get_channel(REPORT_CHANNEL_ID)
+async def submission_check_job():
+    """Check for new submissions every 5 minutes and announce them"""
+    channel = bot.get_channel(get_announcement_channel_id())
     if channel is None:
+        print("Announcement channel not found")
         return
+    
+    # First sync all user submissions from LeetCode API
+    for discord_id, leetcode_username in user_registry.items():
+        sync_user_submissions(discord_id, leetcode_username)
 
     data = load_announcements()
 
     for discord_id, solves in data.items():
         new_solves = [
-            s for s in solves if not s["announced"]
+            s for s in solves if not s.get("announced", False)
         ]
 
+        # Only announce if there are new solves
         if not new_solves:
-            await channel.send(
-            f"👀 <@{discord_id}> still waiting for today’s solve!"
-            )
             continue
 
         mention = f"<@{discord_id}>"
@@ -171,7 +183,7 @@ async def hourly_announcement_job():
         )
 
         await channel.send(
-            f"🔥 {mention} solved {len(new_solves)} problem(s) this hour!\n{lines}"
+            f"🔥 {mention} solved {len(new_solves)} problem(s)!\n{lines}"
         )
 
         for s in new_solves:
@@ -199,7 +211,7 @@ async def smart_nudge_job():
 
 async def weekly_recap_job():
     """Post weekly recap on Sundays"""
-    channel = bot.get_channel(REPORT_CHANNEL_ID)
+    channel = bot.get_channel(get_announcement_channel_id())
     if channel is None:
         return
     
@@ -250,10 +262,11 @@ scheduler.add_job(
     minute=58,
     timezone=ist
 )
+# Check for new submissions every 5 minutes
 scheduler.add_job(
-    hourly_announcement_job,
+    submission_check_job,
     trigger="interval",
-    hours=1
+    minutes=5
 )
 # Smart nudge at 9 PM IST
 scheduler.add_job(
@@ -541,6 +554,88 @@ async def streakboard(ctx):
         medal = medals[i] if i < 3 else f"{i+1}."
         msg += f"{medal} <@{discord_id}> — **{current}**🔥 (Best: {longest})\n"
 
+    await ctx.send(msg)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setchannel(ctx, channel: discord.TextChannel = None):
+    """Set the announcement channel (Admin only)"""
+    global bot_config
+    
+    if channel is None:
+        # Show current channel
+        current_id = get_announcement_channel_id()
+        current_channel = bot.get_channel(current_id)
+        if current_channel:
+            await ctx.send(f"📢 Current announcement channel: {current_channel.mention}")
+        else:
+            await ctx.send(f"📢 Current channel ID: `{current_id}` (channel not found)")
+        return
+    
+    bot_config["announcement_channel_id"] = channel.id
+    save_config(bot_config)
+    await ctx.send(f"✅ Announcement channel set to {channel.mention}")
+
+@setchannel.error
+async def setchannel_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ You need administrator permissions to use this command.")
+
+@bot.command()
+async def progress(ctx):
+    """Show today's progress for all registered users"""
+    if not user_registry:
+        await ctx.send("❌ No registered users yet.")
+        return
+    
+    ist = pytz.timezone("Asia/Kolkata")
+    today_str = datetime.now(ist).strftime("%B %d, %Y")
+    
+    msg = f"📊 **Today's Progress** ({today_str})\n\n"
+    
+    total_problems = 0
+    users_solved = 0
+    
+    user_progress = []
+    
+    for discord_id, leetcode_username in user_registry.items():
+        problems = get_today_solved_with_difficulty(leetcode_username)
+        user_progress.append((discord_id, leetcode_username, problems))
+        if problems:
+            users_solved += 1
+            total_problems += len(problems)
+    
+    # Sort by number of problems solved (descending)
+    user_progress.sort(key=lambda x: len(x[2]), reverse=True)
+    
+    for i, (discord_id, lc_username, problems) in enumerate(user_progress, 1):
+        if problems:
+            msg += f"**{i}. <@{discord_id}>** — {len(problems)} problem(s)\n"
+            for p in problems:
+                diff_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(p.get("difficulty", ""), "⚪")
+                msg += f"   {diff_emoji} {p['title']} ({p.get('difficulty', 'Unknown')}) at {p['time']}\n"
+            msg += "\n"
+        else:
+            msg += f"**{i}. <@{discord_id}>** — ❌ Not solved yet\n\n"
+    
+    msg += f"---\n**Total:** {total_problems} problem(s) solved by {users_solved}/{len(user_registry)} users"
+    
+    await ctx.send(msg)
+
+@bot.command()
+async def users(ctx):
+    """Show all registered users"""
+    if not user_registry:
+        await ctx.send("❌ No registered users yet.")
+        return
+    
+    msg = "👥 **Registered Users**\n\n"
+    
+    for i, (discord_id, lc_username) in enumerate(user_registry.items(), 1):
+        msg += f"{i}. <@{discord_id}> → [{lc_username}](https://leetcode.com/{lc_username}/)\n"
+    
+    msg += f"\n**Total:** {len(user_registry)} users"
+    
     await ctx.send(msg)
 
 

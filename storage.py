@@ -3,6 +3,7 @@ import os
 
 FILE_PATH = "users.json"
 STREAK_PATH = "streak.json"
+CONFIG_PATH = "config.json"
 
 def load_users():
     if not os.path.exists(FILE_PATH):
@@ -29,6 +30,23 @@ def load_streak():
             return json.loads(content)
     except (json.JSONDecodeError, Exception):
         return {}
+
+def load_config():
+    if not os.path.exists(CONFIG_PATH):
+        return {}
+
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            content = f.read().strip()
+            if not content:
+                return {}
+            return json.loads(content)
+    except (json.JSONDecodeError, Exception):
+        return {}
+
+def save_config(data):
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(data, f, indent=4)
     
 def save_streak(data):
     with open(STREAK_PATH, "w") as f:
