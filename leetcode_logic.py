@@ -76,12 +76,13 @@ def fetch_all_solved_problems(username):
         return []
 
 def fetch_problem_details(title_slug):
-    """Fetch problem details including difficulty"""
+    """Fetch problem details including difficulty and question number"""
     url = "https://leetcode.com/graphql"
 
     query = """
     query questionData($titleSlug: String!) {
       question(titleSlug: $titleSlug) {
+        questionFrontendId
         title
         titleSlug
         difficulty
@@ -290,15 +291,17 @@ def get_today_solved_problems(username):
     return solved
 
 def get_today_solved_with_difficulty(username):
-    """Get list of NEW problems solved today with difficulty info"""
+    """Get list of NEW problems solved today with difficulty info and question number"""
     problems = get_today_solved_problems(username)
     
     for p in problems:
         details = fetch_problem_details(p["titleSlug"])
         if details:
+            p["questionNo"] = details.get("questionFrontendId", "?")
             p["difficulty"] = details.get("difficulty", "Unknown")
             p["link"] = f"https://leetcode.com/problems/{p['titleSlug']}/"
         else:
+            p["questionNo"] = "?"
             p["difficulty"] = "Unknown"
             p["link"] = f"https://leetcode.com/problems/{p['titleSlug']}/"
     

@@ -11,7 +11,8 @@ from leetcode_logic import (
     get_today_solved_problems,
     get_today_solved_with_difficulty,
     get_difficulty_breakdown,
-    get_user_ranking
+    get_user_ranking,
+    fetch_problem_details
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
@@ -149,6 +150,7 @@ def sync_user_submissions(discord_id, leetcode_username):
 
         data[str(discord_id)].append({
             "title": sub["title"],
+            "titleSlug": sub.get("titleSlug", ""),
             "timestamp": ts,
             "announced": False
         })
@@ -178,12 +180,23 @@ async def submission_check_job():
             continue
 
         mention = f"<@{discord_id}>"
-        lines = "\n".join(
-            f"- {s['title']}" for s in new_solves
-        )
+        
+        # Fetch problem details for each solve
+        lines = []
+        for s in new_solves:
+            title_slug = s.get("titleSlug", "")
+            details = fetch_problem_details(title_slug) if title_slug else None
+            
+            if details:
+                q_no = details.get("questionFrontendId", "?")
+                diff = details.get("difficulty", "Unknown")
+                diff_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(diff, "⚪")
+                lines.append(f"{diff_emoji} #{q_no}. {s['title']} ({diff})")
+            else:
+                lines.append(f"- {s['title']}")
 
         await channel.send(
-            f"🔥 {mention} solved {len(new_solves)} problem(s)!\n{lines}"
+            f"🔥 {mention} solved {len(new_solves)} problem(s)!\n" + "\n".join(lines)
         )
 
         for s in new_solves:
@@ -498,7 +511,7 @@ async def profile(ctx, member: discord.Member = None):
             msg += "\n\n**Today's Problems:**\n"
             for p in problems:
                 diff_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(p.get("difficulty", ""), "⚪")
-                msg += f"{diff_emoji} [{p['title']}]({p['link']}) at {p['time']}\n"
+                msg += f"{diff_emoji} #{p.get('questionNo', '?')}. [{p['title']}]({p['link']}) at {p['time']}\n"
     else:
         msg += "❌ **Not solved today**"
 
@@ -524,7 +537,7 @@ async def today(ctx):
     
     for p in problems:
         diff_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(p.get("difficulty", ""), "⚪")
-        msg += f"{diff_emoji} **{p.get('difficulty', 'Unknown')}** — [{p['title']}]({p['link']}) at {p['time']}\n"
+        msg += f"{diff_emoji} **{p.get('difficulty', 'Unknown')}** — #{p.get('questionNo', '?')}. [{p['title']}]({p['link']}) at {p['time']}\n"
     
     await ctx.send(msg)
 
@@ -613,7 +626,7 @@ async def progress(ctx):
             msg += f"**{i}. <@{discord_id}>** — {len(problems)} problem(s)\n"
             for p in problems:
                 diff_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(p.get("difficulty", ""), "⚪")
-                msg += f"   {diff_emoji} {p['title']} ({p.get('difficulty', 'Unknown')}) at {p['time']}\n"
+                msg += f"   {diff_emoji} #{p.get('questionNo', '?')}. {p['title']} ({p.get('difficulty', 'Unknown')}) at {p['time']}\n"
             msg += "\n"
         else:
             msg += f"**{i}. <@{discord_id}>** — ❌ Not solved yet\n\n"
