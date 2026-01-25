@@ -4,6 +4,7 @@ import os
 FILE_PATH = "users.json"
 STREAK_PATH = "streak.json"
 CONFIG_PATH = "config.json"
+WEEKLY_PATH = "weekly.json"
 
 def load_users():
     if not os.path.exists(FILE_PATH):
@@ -88,3 +89,66 @@ def remove_user(user_registry, streak_registry, discord_id):
     if discord_id in streak_registry:
         del streak_registry[discord_id]
         save_streak(streak_registry)
+
+def load_weekly():
+    """Load weekly leaderboard data"""
+    if not os.path.exists(WEEKLY_PATH):
+        return {"week_start": None, "data": {}}
+
+    try:
+        with open(WEEKLY_PATH, "r") as f:
+            content = f.read().strip()
+            if not content:
+                return {"week_start": None, "data": {}}
+            return json.loads(content)
+    except (json.JSONDecodeError, Exception):
+        return {"week_start": None, "data": {}}
+
+def save_weekly(data):
+    """Save weekly leaderboard data"""
+    with open(WEEKLY_PATH, "w") as f:
+        json.dump(data, f, indent=4)
+
+def reset_weekly():
+    """Reset weekly leaderboard data"""
+    from datetime import datetime
+    data = {
+        "week_start": datetime.now().strftime("%Y-%m-%d"),
+        "data": {}
+    }
+    save_weekly(data)
+    return data
+
+def update_weekly_solve(discord_id, problem_title, title_slug, difficulty, question_no):
+    """Add a problem to user's weekly solve count"""
+    weekly = load_weekly()
+    discord_id = str(discord_id)
+    
+    if discord_id not in weekly["data"]:
+        weekly["data"][discord_id] = {
+            "count": 0,
+            "problems": [],
+            "easy": 0,
+            "medium": 0,
+            "hard": 0
+        }
+    
+    # Check if problem already counted this week
+    existing_slugs = [p.get("titleSlug") for p in weekly["data"][discord_id]["problems"]]
+    if title_slug not in existing_slugs:
+        weekly["data"][discord_id]["count"] += 1
+        weekly["data"][discord_id]["problems"].append({
+            "title": problem_title,
+            "titleSlug": title_slug,
+            "questionNo": question_no,
+            "difficulty": difficulty
+        })
+        
+        # Update difficulty counts
+        diff_lower = difficulty.lower()
+        if diff_lower in ["easy", "medium", "hard"]:
+            weekly["data"][discord_id][diff_lower] += 1
+        
+        save_weekly(weekly)
+    
+    return weekly

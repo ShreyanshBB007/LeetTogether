@@ -26,7 +26,11 @@ from storage import (
     update_longest_streak,
     remove_user,
     load_config,
-    save_config
+    save_config,
+    load_weekly,
+    save_weekly,
+    reset_weekly,
+    update_weekly_solve
 )
 from hourly_announcements import load_announcements, save_announcements
 import webserver
@@ -192,6 +196,9 @@ async def submission_check_job():
                 diff = details.get("difficulty", "Unknown")
                 diff_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(diff, "⚪")
                 lines.append(f"{diff_emoji} #{q_no}. {s['title']} ({diff})")
+                
+                # Track weekly solve
+                update_weekly_solve(discord_id, s['title'], title_slug, diff, q_no)
             else:
                 lines.append(f"- {s['title']}")
 
@@ -220,6 +227,17 @@ async def smart_nudge_job():
                     )
             except Exception as e:
                 print(f"Could not send nudge to {discord_id}: {e}")
+
+
+async def weekly_reset_job():
+    """Reset weekly leaderboard on Sunday 11:59 PM"""
+    channel = bot.get_channel(get_announcement_channel_id())
+    if channel:
+        weekly = load_weekly()
+        if weekly["data"]:
+            await channel.send("🔄 Weekly leaderboard has been reset! Good luck this week! 💪")
+    reset_weekly()
+    print("Weekly leaderboard reset")
 
 
 async def weekly_recap_job():
@@ -296,6 +314,15 @@ scheduler.add_job(
     day_of_week="sun",
     hour=22,
     minute=0,
+    timezone=ist
+)
+# Reset weekly leaderboard on Sundays at 11:59 PM IST
+scheduler.add_job(
+    weekly_reset_job,
+    "cron",
+    day_of_week="sun",
+    hour=23,
+    minute=59,
     timezone=ist
 )
 
@@ -648,6 +675,43 @@ async def users(ctx):
         msg += f"{i}. <@{discord_id}> → [{lc_username}](https://leetcode.com/{lc_username}/)\n"
     
     msg += f"\n**Total:** {len(user_registry)} users"
+    
+    await ctx.send(msg)
+
+@bot.command()
+async def weekly(ctx):
+    """Show weekly leaderboard (resets every Sunday 11:59 PM IST)"""
+    weekly_data = load_weekly()
+    
+    if not weekly_data["data"]:
+        await ctx.send("📅 No problems solved this week yet!")
+        return
+    
+    # Sort by count descending
+    results = []
+    for discord_id, data in weekly_data["data"].items():
+        results.append((
+            discord_id, 
+            data.get("count", 0),
+            data.get("easy", 0),
+            data.get("medium", 0),
+            data.get("hard", 0)
+        ))
+    
+    results.sort(key=lambda x: x[1], reverse=True)
+    
+    week_start = weekly_data.get("week_start", "Unknown")
+    msg = f"📅 **Weekly Leaderboard**\n_(Week starting: {week_start})_\n\n"
+    
+    medals = ["🥇", "🥈", "🥉"]
+    
+    for i, (discord_id, count, easy, medium, hard) in enumerate(results[:10]):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        breakdown = f"🟢{easy} 🟡{medium} 🔴{hard}"
+        msg += f"{medal} <@{discord_id}> — **{count}** problems ({breakdown})\n"
+    
+    total_week = sum(r[1] for r in results)
+    msg += f"\n---\n**Total this week:** {total_week} problems by {len(results)} users"
     
     await ctx.send(msg)
 
