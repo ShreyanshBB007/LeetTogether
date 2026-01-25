@@ -713,7 +713,7 @@ async def weekly(ctx):
     for i, (discord_id, unique, submissions, easy, medium, hard) in enumerate(results[:10]):
         medal = medals[i] if i < 3 else f"{i+1}."
         breakdown = f"🟢{easy} 🟡{medium} 🔴{hard}"
-        msg += f"{medal} <@{discord_id}> — **{unique}** unique ({submissions} submissions) | {breakdown}\n"
+        msg += f"{medal} <@{discord_id}> — **{unique}** problems solved ({submissions} submissions) | {breakdown}\n"
     
     total_unique = sum(r[1] for r in results)
     total_subs = sum(r[2] for r in results)
