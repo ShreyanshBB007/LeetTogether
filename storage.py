@@ -202,17 +202,23 @@ def update_weekly_solve(discord_id, problem_title, title_slug, difficulty, quest
     
     if discord_id not in weekly["data"]:
         weekly["data"][discord_id] = {
-            "count": 0,
+            "unique_problems": 0,
+            "submissions": 0,
             "problems": [],
             "easy": 0,
             "medium": 0,
             "hard": 0
         }
     
-    # Check if problem already counted this week
+    # Always increment submissions count
+    weekly["data"][discord_id]["submissions"] = weekly["data"][discord_id].get("submissions", 0) + 1
+    
+    # Check if problem already counted this week (unique problems)
     existing_slugs = [p.get("titleSlug") for p in weekly["data"][discord_id]["problems"]]
     if title_slug not in existing_slugs:
-        weekly["data"][discord_id]["count"] += 1
+        weekly["data"][discord_id]["unique_problems"] = weekly["data"][discord_id].get("unique_problems", 0) + 1
+        # Keep backward compatibility with old 'count' field
+        weekly["data"][discord_id]["count"] = weekly["data"][discord_id]["unique_problems"]
         weekly["data"][discord_id]["problems"].append({
             "title": problem_title,
             "titleSlug": title_slug,
@@ -224,9 +230,8 @@ def update_weekly_solve(discord_id, problem_title, title_slug, difficulty, quest
         diff_lower = difficulty.lower()
         if diff_lower in ["easy", "medium", "hard"]:
             weekly["data"][discord_id][diff_lower] += 1
-        
-        save_weekly(weekly)
     
+    save_weekly(weekly)
     return weekly
 
 # ============== HELPERS ==============

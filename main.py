@@ -687,31 +687,37 @@ async def weekly(ctx):
         await ctx.send("📅 No problems solved this week yet!")
         return
     
-    # Sort by count descending
+    # Sort by unique problems (primary), then submissions (secondary)
     results = []
     for discord_id, data in weekly_data["data"].items():
+        # Support both old 'count' field and new 'unique_problems' field
+        unique = data.get("unique_problems", data.get("count", 0))
+        submissions = data.get("submissions", unique)  # fallback to unique if no submissions tracked
         results.append((
             discord_id, 
-            data.get("count", 0),
+            unique,
+            submissions,
             data.get("easy", 0),
             data.get("medium", 0),
             data.get("hard", 0)
         ))
     
-    results.sort(key=lambda x: x[1], reverse=True)
+    # Sort by unique problems first, then by submissions as tiebreaker
+    results.sort(key=lambda x: (x[1], x[2]), reverse=True)
     
     week_start = weekly_data.get("week_start", "Unknown")
     msg = f"📅 **Weekly Leaderboard**\n_(Week starting: {week_start})_\n\n"
     
     medals = ["🥇", "🥈", "🥉"]
     
-    for i, (discord_id, count, easy, medium, hard) in enumerate(results[:10]):
+    for i, (discord_id, unique, submissions, easy, medium, hard) in enumerate(results[:10]):
         medal = medals[i] if i < 3 else f"{i+1}."
         breakdown = f"🟢{easy} 🟡{medium} 🔴{hard}"
-        msg += f"{medal} <@{discord_id}> — **{count}** problems ({breakdown})\n"
+        msg += f"{medal} <@{discord_id}> — **{unique}** unique ({submissions} submissions) | {breakdown}\n"
     
-    total_week = sum(r[1] for r in results)
-    msg += f"\n---\n**Total this week:** {total_week} problems by {len(results)} users"
+    total_unique = sum(r[1] for r in results)
+    total_subs = sum(r[2] for r in results)
+    msg += f"\n---\n**Total this week:** {total_unique} unique problems ({total_subs} submissions) by {len(results)} users"
     
     await ctx.send(msg)
 
