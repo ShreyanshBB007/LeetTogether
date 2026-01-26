@@ -13,7 +13,10 @@ from leetcode_logic import (
     get_difficulty_breakdown,
     get_user_ranking,
     fetch_problem_details,
-    get_today_stats
+    get_today_stats,
+    fetch_problem_by_number,
+    fetch_daily_challenge,
+    strip_html
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
@@ -768,6 +771,104 @@ async def weekly(ctx):
     msg += f"\n---\n**Total this week:** {total_unique} problems solved ({total_subs} submissions) by {len(results)} users"
     
     await ctx.send(msg)
+
+
+@bot.command()
+async def problem(ctx, question_no: int):
+    """Display full description of a LeetCode problem by question number"""
+    await ctx.send(f"🔍 Fetching problem #{question_no}...")
+    
+    details = fetch_problem_by_number(question_no)
+    
+    if not details:
+        await ctx.send(f"❌ Could not find problem #{question_no}. Please check the question number.")
+        return
+    
+    q_no = details.get("questionFrontendId", "?")
+    title = details.get("title", "Unknown")
+    difficulty = details.get("difficulty", "Unknown")
+    title_slug = details.get("titleSlug", "")
+    content = details.get("content", "No description available.")
+    tags = details.get("topicTags", [])
+    ac_rate = details.get("acRate", 0)
+    likes = details.get("likes", 0)
+    dislikes = details.get("dislikes", 0)
+    
+    diff_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(difficulty, "⚪")
+    tag_str = ", ".join([t["name"] for t in tags[:5]]) if tags else "None"
+    
+    # Convert HTML to plain text
+    description = strip_html(content)
+    
+    # Truncate if too long for Discord (2000 char limit)
+    if len(description) > 1500:
+        description = description[:1500] + "\n\n... _(truncated)_"
+    
+    link = f"https://leetcode.com/problems/{title_slug}/"
+    
+    msg = f"{diff_emoji} **#{q_no}. {title}** ({difficulty})\n"
+    msg += f"📊 Acceptance: {ac_rate:.1f}% | 👍 {likes} | 👎 {dislikes}\n"
+    msg += f"🏷️ Tags: {tag_str}\n"
+    msg += f"🔗 {link}\n\n"
+    msg += f"**Description:**\n{description}"
+    
+    # Split message if too long
+    if len(msg) > 2000:
+        await ctx.send(msg[:2000])
+        if len(msg) > 2000:
+            await ctx.send(msg[2000:4000])
+    else:
+        await ctx.send(msg)
+
+
+@bot.command()
+async def daily(ctx):
+    """Display today's LeetCode daily challenge"""
+    await ctx.send("🌅 Fetching today's daily challenge...")
+    
+    details = fetch_daily_challenge()
+    
+    if not details:
+        await ctx.send("❌ Could not fetch today's daily challenge. Please try again later.")
+        return
+    
+    q_no = details.get("questionFrontendId", "?")
+    title = details.get("title", "Unknown")
+    difficulty = details.get("difficulty", "Unknown")
+    title_slug = details.get("titleSlug", "")
+    content = details.get("content", "No description available.")
+    tags = details.get("topicTags", [])
+    ac_rate = details.get("acRate", 0)
+    likes = details.get("likes", 0)
+    dislikes = details.get("dislikes", 0)
+    date = details.get("date", "")
+    
+    diff_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(difficulty, "⚪")
+    tag_str = ", ".join([t["name"] for t in tags[:5]]) if tags else "None"
+    
+    # Convert HTML to plain text
+    description = strip_html(content)
+    
+    # Truncate if too long for Discord (2000 char limit)
+    if len(description) > 1500:
+        description = description[:1500] + "\n\n... _(truncated)_"
+    
+    link = f"https://leetcode.com/problems/{title_slug}/"
+    
+    msg = f"📅 **Daily Challenge** ({date})\n\n"
+    msg += f"{diff_emoji} **#{q_no}. {title}** ({difficulty})\n"
+    msg += f"📊 Acceptance: {ac_rate:.1f}% | 👍 {likes} | 👎 {dislikes}\n"
+    msg += f"🏷️ Tags: {tag_str}\n"
+    msg += f"🔗 {link}\n\n"
+    msg += f"**Description:**\n{description}"
+    
+    # Split message if too long
+    if len(msg) > 2000:
+        await ctx.send(msg[:2000])
+        if len(msg) > 2000:
+            await ctx.send(msg[2000:4000])
+    else:
+        await ctx.send(msg)
 
 
 webserver.keep_alive()

@@ -391,3 +391,192 @@ def get_user_ranking(username):
         return None
     
     return stats["profile"].get("ranking")
+
+def fetch_problem_full_details(title_slug):
+    """Fetch full problem details including description"""
+    url = "https://leetcode.com/graphql"
+
+    query = """
+    query questionData($titleSlug: String!) {
+      question(titleSlug: $titleSlug) {
+        questionFrontendId
+        title
+        titleSlug
+        difficulty
+        content
+        likes
+        dislikes
+        topicTags {
+          name
+        }
+        stats
+        hints
+        acRate
+      }
+    }
+    """
+
+    variables = {"titleSlug": title_slug}
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json={"query": query, "variables": variables},
+            timeout=10
+        )
+        data = response.json()
+        if data.get("data") and data["data"].get("question"):
+            return data["data"]["question"]
+        return None
+    except Exception as e:
+        print(f"Error fetching full problem details for {title_slug}: {e}")
+        return None
+
+def fetch_problem_by_number(question_no):
+    """Fetch problem details by question number (frontend ID)"""
+    url = "https://leetcode.com/graphql"
+
+    # First, we need to get the titleSlug from the question number
+    query = """
+    query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+      problemsetQuestionList: questionList(
+        categorySlug: $categorySlug
+        limit: $limit
+        skip: $skip
+        filters: $filters
+      ) {
+        questions: data {
+          questionFrontendId
+          title
+          titleSlug
+          difficulty
+        }
+      }
+    }
+    """
+
+    variables = {
+        "categorySlug": "",
+        "skip": 0,
+        "limit": 1,
+        "filters": {"searchKeywords": str(question_no)}
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json={"query": query, "variables": variables},
+            timeout=10
+        )
+        data = response.json()
+        questions = data.get("data", {}).get("problemsetQuestionList", {}).get("questions", [])
+        
+        # Find exact match for question number
+        for q in questions:
+            if q.get("questionFrontendId") == str(question_no):
+                # Now fetch full details using titleSlug
+                return fetch_problem_full_details(q["titleSlug"])
+        
+        return None
+    except Exception as e:
+        print(f"Error fetching problem by number {question_no}: {e}")
+        return None
+
+def fetch_daily_challenge():
+    """Fetch today's daily challenge problem"""
+    url = "https://leetcode.com/graphql"
+
+    query = """
+    query questionOfToday {
+      activeDailyCodingChallengeQuestion {
+        date
+        link
+        question {
+          questionFrontendId
+          title
+          titleSlug
+          difficulty
+          content
+          likes
+          dislikes
+          topicTags {
+            name
+          }
+          acRate
+        }
+      }
+    }
+    """
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json={"query": query},
+            timeout=10
+        )
+        data = response.json()
+        daily = data.get("data", {}).get("activeDailyCodingChallengeQuestion")
+        if daily and daily.get("question"):
+            result = daily["question"]
+            result["date"] = daily.get("date")
+            result["link"] = daily.get("link")
+            return result
+        return None
+    except Exception as e:
+        print(f"Error fetching daily challenge: {e}")
+        return None
+
+def strip_html(html_content):
+    """Strip HTML tags and convert to plain text for Discord"""
+    import re
+    if not html_content:
+        return ""
+    
+    # Replace common HTML entities
+    text = html_content.replace("&nbsp;", " ")
+    text = text.replace("&lt;", "<")
+    text = text.replace("&gt;", ">")
+    text = text.replace("&amp;", "&")
+    text = text.replace("&quot;", '"')
+    text = text.replace("&#39;", "'")
+    
+    # Replace <br>, <p>, <li> with newlines
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    text = re.sub(r'</p>', '\n\n', text)
+    text = re.sub(r'<li>', '\n• ', text)
+    
+    # Replace <code> and <pre> with markdown code blocks
+    text = re.sub(r'<pre>(.*?)</pre>', r'```\n\1\n```', text, flags=re.DOTALL)
+    text = re.sub(r'<code>(.*?)</code>', r'`\1`', text)
+    
+    # Replace <strong> and <b> with bold
+    text = re.sub(r'<(strong|b)>(.*?)</(strong|b)>', r'**\2**', text)
+    
+    # Replace <em> and <i> with italic
+    text = re.sub(r'<(em|i)>(.*?)</(em|i)>', r'*\2*', text)
+    
+    # Remove all other HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # Clean up multiple newlines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
