@@ -195,8 +195,12 @@ def reset_weekly():
     save_weekly(data)
     return data
 
-def update_weekly_solve(discord_id, problem_title, title_slug, difficulty, question_no):
-    """Add a problem to user's weekly solve count"""
+def update_weekly_solve(discord_id, problem_title, title_slug, difficulty, question_no, is_new_problem=True):
+    """Add a problem to user's weekly solve count
+    
+    Args:
+        is_new_problem: If False, this is a re-solve of an old problem - counts as submission but not unique problem
+    """
     weekly = load_weekly()
     discord_id = str(discord_id)
     
@@ -210,26 +214,28 @@ def update_weekly_solve(discord_id, problem_title, title_slug, difficulty, quest
             "hard": 0
         }
     
-    # Always increment submissions count
+    # Always increment submissions count (even for re-solves)
     weekly["data"][discord_id]["submissions"] = weekly["data"][discord_id].get("submissions", 0) + 1
     
-    # Check if problem already counted this week (unique problems)
-    existing_slugs = [p.get("titleSlug") for p in weekly["data"][discord_id]["problems"]]
-    if title_slug not in existing_slugs:
-        weekly["data"][discord_id]["unique_problems"] = weekly["data"][discord_id].get("unique_problems", 0) + 1
-        # Keep backward compatibility with old 'count' field
-        weekly["data"][discord_id]["count"] = weekly["data"][discord_id]["unique_problems"]
-        weekly["data"][discord_id]["problems"].append({
-            "title": problem_title,
-            "titleSlug": title_slug,
-            "questionNo": question_no,
-            "difficulty": difficulty
-        })
-        
-        # Update difficulty counts
-        diff_lower = difficulty.lower()
-        if diff_lower in ["easy", "medium", "hard"]:
-            weekly["data"][discord_id][diff_lower] += 1
+    # Only count as unique problem if it's truly new (not a re-solve)
+    if is_new_problem:
+        # Check if problem already counted this week (unique problems)
+        existing_slugs = [p.get("titleSlug") for p in weekly["data"][discord_id]["problems"]]
+        if title_slug not in existing_slugs:
+            weekly["data"][discord_id]["unique_problems"] = weekly["data"][discord_id].get("unique_problems", 0) + 1
+            # Keep backward compatibility with old 'count' field
+            weekly["data"][discord_id]["count"] = weekly["data"][discord_id]["unique_problems"]
+            weekly["data"][discord_id]["problems"].append({
+                "title": problem_title,
+                "titleSlug": title_slug,
+                "questionNo": question_no,
+                "difficulty": difficulty
+            })
+            
+            # Update difficulty counts
+            diff_lower = difficulty.lower()
+            if diff_lower in ["easy", "medium", "hard"]:
+                weekly["data"][discord_id][diff_lower] += 1
     
     save_weekly(weekly)
     return weekly

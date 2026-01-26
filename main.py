@@ -133,6 +133,8 @@ def already_checked_today(discord_id):
     return last_checked_date == today
 
 def sync_user_submissions(discord_id, leetcode_username):
+    from leetcode_logic import get_problems_solved_before_today
+    
     data = load_announcements()
 
     if str(discord_id) not in data:
@@ -142,6 +144,9 @@ def sync_user_submissions(discord_id, leetcode_username):
         entry["timestamp"] for entry in data[str(discord_id)]
     }
 
+    # Get problems that were solved before today (to identify re-solves)
+    previously_solved = get_problems_solved_before_today(leetcode_username)
+
     submissions = fetch_recent_submissions(leetcode_username)
 
     for sub in submissions:
@@ -149,15 +154,20 @@ def sync_user_submissions(discord_id, leetcode_username):
             continue
 
         ts = int(sub["timestamp"])
+        title_slug = sub.get("titleSlug", "")
 
         if ts in existing_timestamps:
             continue
+        
+        # Mark if this is a re-solve (problem was already solved before today)
+        is_resubmit = title_slug in previously_solved
 
         data[str(discord_id)].append({
             "title": sub["title"],
-            "titleSlug": sub.get("titleSlug", ""),
+            "titleSlug": title_slug,
             "timestamp": ts,
-            "announced": False
+            "announced": False,
+            "is_resubmit": is_resubmit
         })
 
     save_announcements(data)
@@ -180,15 +190,34 @@ async def submission_check_job():
             s for s in solves if not s.get("announced", False)
         ]
 
-        # Only announce if there are new solves
+        # Only process if there are new solves
         if not new_solves:
             continue
 
         mention = f"<@{discord_id}>"
         
-        # Fetch problem details for each solve
+        # Separate new problems from re-solves
+        new_problems = [s for s in new_solves if not s.get("is_resubmit", False)]
+        resubmits = [s for s in new_solves if s.get("is_resubmit", False)]
+        
+        # Track re-solves as submissions only (not new problems)
+        for s in resubmits:
+            title_slug = s.get("titleSlug", "")
+            details = fetch_problem_details(title_slug) if title_slug else None
+            if details:
+                diff = details.get("difficulty", "Unknown")
+                q_no = details.get("questionFrontendId", "?")
+                # Track as submission only, not as new problem
+                update_weekly_solve(discord_id, s['title'], title_slug, diff, q_no, is_new_problem=False)
+            s["announced"] = True
+        
+        # Only announce truly new problems
+        if not new_problems:
+            continue
+        
+        # Fetch problem details for each new solve
         lines = []
-        for s in new_solves:
+        for s in new_problems:
             title_slug = s.get("titleSlug", "")
             details = fetch_problem_details(title_slug) if title_slug else None
             
@@ -198,16 +227,16 @@ async def submission_check_job():
                 diff_emoji = {"Easy": "🟢", "Medium": "🟡", "Hard": "🔴"}.get(diff, "⚪")
                 lines.append(f"{diff_emoji} #{q_no}. {s['title']} ({diff})")
                 
-                # Track weekly solve
-                update_weekly_solve(discord_id, s['title'], title_slug, diff, q_no)
+                # Track weekly solve as new problem
+                update_weekly_solve(discord_id, s['title'], title_slug, diff, q_no, is_new_problem=True)
             else:
                 lines.append(f"- {s['title']}")
 
         await channel.send(
-            f"🔥 {mention} solved {len(new_solves)} problem(s)!\n" + "\n".join(lines)
+            f"🔥 {mention} solved {len(new_problems)} problem(s)!\n" + "\n".join(lines)
         )
 
-        for s in new_solves:
+        for s in new_problems:
             s["announced"] = True
 
     save_announcements(data)
@@ -722,7 +751,6 @@ async def weekly(ctx):
             data.get("hard", 0)
         ))
     
-    # Sort by unique problems first, then by submissions as tiebreaker
     results.sort(key=lambda x: (x[1], x[2]), reverse=True)
     
     week_start = weekly_data.get("week_start", "Unknown")
