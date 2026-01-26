@@ -40,7 +40,7 @@ def fetch_recent_submissions(username):
         return []
 
 def fetch_all_solved_problems(username):
-    """Fetch all problems the user has ever solved (AC submissions)"""
+    """Fetch all problems the user has ever solved (AC submissions) - last 100 only"""
     url = "https://leetcode.com/graphql"
 
     query = """
@@ -74,6 +74,103 @@ def fetch_all_solved_problems(username):
     except Exception as e:
         print(f"Error fetching solved problems for {username}: {e}")
         return []
+
+def fetch_all_solved_problem_slugs(username):
+    """Fetch ALL unique problem slugs the user has ever solved (not just recent 100)"""
+    url = "https://leetcode.com/graphql"
+
+    query = """
+    query userProblemsSolved($username: String!) {
+      allQuestionsCount {
+        difficulty
+        count
+      }
+      matchedUser(username: $username) {
+        problemsSolvedBeatsStats {
+          difficulty
+          percentage
+        }
+        submitStatsGlobal {
+          acSubmissionNum {
+            difficulty
+            count
+          }
+        }
+      }
+    }
+    """
+
+    # This query doesn't give us slugs, so we need a different approach
+    # Use the submission list API with higher limit or pagination
+    
+    # Try to get solved questions list
+    query2 = """
+    query userProfileUserQuestionProgress($userSlug: String!) {
+      userProfileUserQuestionProgress(userSlug: $userSlug) {
+        numAcceptedQuestions {
+          difficulty
+          count
+        }
+      }
+    }
+    """
+    
+    # Actually, let's use the AC submission list but check for first solve date
+    # by looking at ALL submissions for problems solved today
+    
+    variables = {"username": username}
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    # Get a larger list of recent AC submissions
+    query_large = """
+    query userProblemsSolved($username: String!) {
+      recentAcSubmissionList(username: $username, limit: 500) {
+        title
+        titleSlug
+        timestamp
+      }
+    }
+    """
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json={"query": query_large, "variables": variables},
+            timeout=15
+        )
+        data = response.json()
+        if data.get("data") and data["data"].get("recentAcSubmissionList"):
+            submissions = data["data"]["recentAcSubmissionList"]
+            # Return set of all unique slugs
+            return {s.get("titleSlug", "") for s in submissions if s.get("titleSlug")}
+        return set()
+    except Exception as e:
+        print(f"Error fetching all solved problem slugs for {username}: {e}")
+        return set()
+
+def get_first_solve_date(username, title_slug):
+    """Get the date when user FIRST solved a problem (earliest AC submission)"""
+    all_solved = fetch_all_solved_problems(username)
+    
+    if not all_solved:
+        return None
+    
+    ist = pytz.timezone("Asia/Kolkata")
+    earliest_date = None
+    
+    for s in all_solved:
+        if s.get("titleSlug") == title_slug:
+            ts = int(s["timestamp"])
+            ist_time = datetime.utcfromtimestamp(ts).replace(tzinfo=pytz.utc).astimezone(ist)
+            if earliest_date is None or ist_time.date() < earliest_date:
+                earliest_date = ist_time.date()
+    
+    return earliest_date
 
 def fetch_problem_details(title_slug):
     """Fetch problem details including difficulty and question number"""
@@ -160,8 +257,43 @@ def fetch_user_stats(username):
         return None
 
 def get_problems_solved_before_today(username):
-    """Get set of problem slugs that were solved before today"""
-    all_solved = fetch_all_solved_problems(username)
+    """Get set of problem slugs that were solved before today.
+    
+    Uses a larger limit (500) to catch older problems.
+    For each problem, finds the EARLIEST solve date - if it's before today,
+    the problem counts as previously solved.
+    """
+    url = "https://leetcode.com/graphql"
+    
+    # Fetch with higher limit to catch older solves
+    query = """
+    query userProblemsSolved($username: String!) {
+      recentAcSubmissionList(username: $username, limit: 500) {
+        title
+        titleSlug
+        timestamp
+      }
+    }
+    """
+    
+    variables = {"username": username}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
+    
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json={"query": query, "variables": variables},
+            timeout=15
+        )
+        data = response.json()
+        all_solved = data.get("data", {}).get("recentAcSubmissionList", [])
+    except Exception as e:
+        print(f"Error fetching solved problems for {username}: {e}")
+        all_solved = []
     
     if not all_solved:
         return set()
@@ -169,15 +301,27 @@ def get_problems_solved_before_today(username):
     ist = pytz.timezone("Asia/Kolkata")
     today = datetime.now(ist).date()
     
-    solved_before_today = set()
+    # Track the EARLIEST solve date for each problem
+    earliest_solve = {}
     
     for s in all_solved:
+        title_slug = s.get("titleSlug", "")
+        if not title_slug:
+            continue
+            
         ts = int(s["timestamp"])
         ist_time = datetime.utcfromtimestamp(ts).replace(tzinfo=pytz.utc).astimezone(ist)
+        solve_date = ist_time.date()
         
-        # If solved before today, add to the set
-        if ist_time.date() < today:
-            solved_before_today.add(s.get("titleSlug", ""))
+        # Keep track of earliest solve date per problem
+        if title_slug not in earliest_solve or solve_date < earliest_solve[title_slug]:
+            earliest_solve[title_slug] = solve_date
+    
+    # Return problems whose FIRST solve was before today
+    solved_before_today = {
+        slug for slug, first_date in earliest_solve.items() 
+        if first_date < today
+    }
     
     return solved_before_today
 
