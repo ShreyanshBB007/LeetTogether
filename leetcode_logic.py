@@ -509,6 +509,86 @@ def get_today_stats(username):
         "hard": hard
     }
 
+def get_weekly_solved_problems(username, week_start, week_end):
+    """Get list of NEW problems solved within a date range (for weekly sync)"""
+    url = "https://leetcode.com/graphql"
+    
+    # Get recent AC submissions with larger limit for weekly data
+    query = """
+    query userProblemsSolved($username: String!) {
+      recentAcSubmissionList(username: $username, limit: 100) {
+        title
+        titleSlug
+        timestamp
+      }
+    }
+    """
+    
+    variables = {"username": username}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
+    
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json={"query": query, "variables": variables},
+            timeout=15
+        )
+        data = response.json()
+        all_submissions = data.get("data", {}).get("recentAcSubmissionList", [])
+    except Exception as e:
+        print(f"Error fetching weekly submissions for {username}: {e}")
+        return []
+    
+    if not all_submissions:
+        return []
+    
+    ist = pytz.timezone("Asia/Kolkata")
+    
+    # Track the EARLIEST solve date for each problem to identify truly new problems
+    earliest_solve = {}
+    
+    for s in all_submissions:
+        title_slug = s.get("titleSlug", "")
+        if not title_slug:
+            continue
+            
+        ts = int(s["timestamp"])
+        ist_time = datetime.utcfromtimestamp(ts).replace(tzinfo=pytz.utc).astimezone(ist)
+        solve_date = ist_time.date()
+        
+        if title_slug not in earliest_solve or solve_date < earliest_solve[title_slug]["date"]:
+            earliest_solve[title_slug] = {
+                "date": solve_date,
+                "title": s.get("title", ""),
+                "titleSlug": title_slug,
+                "timestamp": ts
+            }
+    
+    # Get problems first solved within the week range
+    weekly_problems = []
+    seen_slugs = set()
+    
+    for slug, info in earliest_solve.items():
+        if info["date"] >= week_start and info["date"] <= week_end:
+            if slug not in seen_slugs:
+                # Fetch problem details for difficulty
+                details = fetch_problem_details(slug)
+                weekly_problems.append({
+                    "title": info["title"],
+                    "titleSlug": slug,
+                    "timestamp": info["timestamp"],
+                    "questionNo": details.get("questionFrontendId", "?") if details else "?",
+                    "difficulty": details.get("difficulty", "Unknown") if details else "Unknown"
+                })
+                seen_slugs.add(slug)
+    
+    return weekly_problems
+
+
 def get_difficulty_breakdown(username):
     """Get difficulty breakdown of all solved problems"""
     stats = fetch_user_stats(username)

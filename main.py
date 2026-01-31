@@ -16,7 +16,8 @@ from leetcode_logic import (
     get_today_stats,
     fetch_problem_by_number,
     fetch_daily_challenge,
-    strip_html
+    strip_html,
+    get_weekly_solved_problems
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
@@ -248,7 +249,14 @@ async def submission_check_job():
 async def smart_nudge_job():
     """Send DM to users who haven't solved by 9 PM IST"""
     for discord_id, leetcode_username in user_registry.items():
-        if not has_user_solved_today(leetcode_username):
+        # Retry logic for API reliability
+        solved = has_user_solved_today(leetcode_username)
+        if not solved:
+            # Wait and retry once more to handle temporary API issues
+            await asyncio.sleep(2)
+            solved = has_user_solved_today(leetcode_username)
+        
+        if not solved:
             try:
                 user = await bot.fetch_user(int(discord_id))
                 if user:
@@ -260,6 +268,65 @@ async def smart_nudge_job():
                     )
             except Exception as e:
                 print(f"Could not send nudge to {discord_id}: {e}")
+
+
+def ensure_weekly_synced():
+    """Catch up any missed submissions for the current week by checking LeetCode API directly"""
+    weekly = load_weekly()
+    week_start_str = weekly.get("week_start")
+    
+    if not week_start_str:
+        return weekly
+    
+    try:
+        week_start = datetime.strptime(week_start_str, "%Y-%m-%d").date()
+    except:
+        return weekly
+    
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).date()
+    
+    for discord_id, leetcode_username in user_registry.items():
+        # Get this week's solved problems directly from LeetCode
+        problems_this_week = get_weekly_solved_problems(leetcode_username, week_start, today)
+        
+        if not problems_this_week:
+            continue
+        
+        # Initialize user in weekly if not exists
+        if str(discord_id) not in weekly["data"]:
+            weekly["data"][str(discord_id)] = {
+                "unique_problems": 0,
+                "submissions": 0,
+                "problems": [],
+                "easy": 0,
+                "medium": 0,
+                "hard": 0
+            }
+        
+        user_data = weekly["data"][str(discord_id)]
+        existing_slugs = {p.get("titleSlug") for p in user_data.get("problems", [])}
+        
+        # Add any missing problems
+        for p in problems_this_week:
+            if p["titleSlug"] not in existing_slugs:
+                user_data["unique_problems"] = user_data.get("unique_problems", 0) + 1
+                user_data["count"] = user_data["unique_problems"]  # backward compat
+                user_data["submissions"] = user_data.get("submissions", 0) + 1
+                user_data["problems"].append({
+                    "title": p["title"],
+                    "titleSlug": p["titleSlug"],
+                    "questionNo": p.get("questionNo", "?"),
+                    "difficulty": p.get("difficulty", "Unknown")
+                })
+                
+                # Update difficulty counts
+                diff_lower = p.get("difficulty", "").lower()
+                if diff_lower in ["easy", "medium", "hard"]:
+                    user_data[diff_lower] = user_data.get(diff_lower, 0) + 1
+    
+    save_weekly(weekly)
+    return weekly
 
 
 async def weekly_reset_job():
@@ -733,7 +800,8 @@ async def users(ctx):
 @bot.command()
 async def weekly(ctx):
     """Show weekly leaderboard (resets every Sunday 11:59 PM IST)"""
-    weekly_data = load_weekly()
+    # Sync any missed submissions before displaying
+    weekly_data = ensure_weekly_synced()
     
     if not weekly_data["data"]:
         await ctx.send("📅 No problems solved this week yet!")
