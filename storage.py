@@ -4,6 +4,7 @@ Storage module - Uses MongoDB if available, falls back to JSON files
 import json
 import os
 from datetime import datetime, timedelta
+import pytz
 
 # Try to import database module
 try:
@@ -188,7 +189,8 @@ def save_weekly(data):
 
 def reset_weekly():
     """Reset weekly leaderboard data"""
-    today = datetime.now()
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).date()
     # Calculate the Monday of the current week
     days_since_monday = today.weekday()  # 0 = Monday, 6 = Sunday
     week_start = today - timedelta(days=days_since_monday)
