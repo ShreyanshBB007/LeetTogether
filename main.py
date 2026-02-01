@@ -20,7 +20,7 @@ from leetcode_logic import (
     get_weekly_solved_problems
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from storage import (
     load_users, 
@@ -270,21 +270,47 @@ async def smart_nudge_job():
                 print(f"Could not send nudge to {discord_id}: {e}")
 
 
+def get_current_week_start():
+    """Get the Monday that starts the current week (IST timezone)"""
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).date()
+    # weekday() returns 0 for Monday, 6 for Sunday
+    days_since_monday = today.weekday()
+    current_week_start = today - timedelta(days=days_since_monday)
+    return current_week_start
+
+
 def ensure_weekly_synced():
     """Catch up any missed submissions for the current week by checking LeetCode API directly"""
     weekly = load_weekly()
     week_start_str = weekly.get("week_start")
     
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).date()
+    current_week_start = get_current_week_start()
+    
+    # Check if we need to reset (stored week_start is from a previous week)
+    if week_start_str:
+        try:
+            stored_week_start = datetime.strptime(week_start_str, "%Y-%m-%d").date()
+            if stored_week_start < current_week_start:
+                # Week has changed, reset the data
+                print(f"New week detected! Resetting weekly data. Old: {stored_week_start}, New: {current_week_start}")
+                weekly = reset_weekly()
+                week_start_str = weekly.get("week_start")
+        except:
+            pass
+    
     if not week_start_str:
-        return weekly
+        # Initialize with current week start
+        weekly["week_start"] = current_week_start.strftime("%Y-%m-%d")
+        save_weekly(weekly)
+        week_start_str = weekly["week_start"]
     
     try:
         week_start = datetime.strptime(week_start_str, "%Y-%m-%d").date()
     except:
         return weekly
-    
-    ist = pytz.timezone("Asia/Kolkata")
-    today = datetime.now(ist).date()
     
     for discord_id, leetcode_username in user_registry.items():
         # Get this week's solved problems directly from LeetCode

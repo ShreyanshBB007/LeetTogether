@@ -3,7 +3,7 @@ Storage module - Uses MongoDB if available, falls back to JSON files
 """
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Try to import database module
 try:
@@ -188,8 +188,13 @@ def save_weekly(data):
 
 def reset_weekly():
     """Reset weekly leaderboard data"""
+    today = datetime.now()
+    # Calculate the Monday of the current week
+    days_since_monday = today.weekday()  # 0 = Monday, 6 = Sunday
+    week_start = today - timedelta(days=days_since_monday)
+    
     data = {
-        "week_start": datetime.now().strftime("%Y-%m-%d"),
+        "week_start": week_start.strftime("%Y-%m-%d"),
         "data": {}
     }
     save_weekly(data)
