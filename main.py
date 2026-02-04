@@ -186,8 +186,10 @@ async def submission_check_job():
     # First sync all user submissions from LeetCode API
     for discord_id, leetcode_username in user_registry.items():
         sync_user_submissions(discord_id, leetcode_username)
+        await asyncio.sleep(0.5)  # Small delay between API calls
 
     data = load_announcements()
+    messages_sent = 0
 
     for discord_id, solves in data.items():
         new_solves = [
@@ -236,9 +238,33 @@ async def submission_check_job():
             else:
                 lines.append(f"- {s['title']}")
 
-        await channel.send(
-            f"🔥 {mention} solved {len(new_problems)} problem(s)!\n" + "\n".join(lines)
-        )
+        # Send message with rate limit handling
+        try:
+            await channel.send(
+                f"🔥 {mention} solved {len(new_problems)} problem(s)!\n" + "\n".join(lines)
+            )
+            messages_sent += 1
+            
+            # Add delay between messages to avoid rate limiting
+            if messages_sent % 5 == 0:
+                await asyncio.sleep(2)  # Longer pause every 5 messages
+            else:
+                await asyncio.sleep(1)  # 1 second delay between messages
+                
+        except discord.errors.HTTPException as e:
+            if e.status == 429:  # Rate limited
+                retry_after = getattr(e, 'retry_after', 5)
+                print(f"Rate limited, waiting {retry_after} seconds...")
+                await asyncio.sleep(retry_after + 1)
+                # Retry once after waiting
+                try:
+                    await channel.send(
+                        f"🔥 {mention} solved {len(new_problems)} problem(s)!\n" + "\n".join(lines)
+                    )
+                except Exception as retry_error:
+                    print(f"Failed to send after retry: {retry_error}")
+            else:
+                print(f"Failed to send announcement: {e}")
 
         for s in new_problems:
             s["announced"] = True
@@ -248,6 +274,7 @@ async def submission_check_job():
 
 async def smart_nudge_job():
     """Send DM to users who haven't solved by 9 PM IST"""
+    messages_sent = 0
     for discord_id, leetcode_username in user_registry.items():
         # Retry logic for API reliability
         solved = has_user_solved_today(leetcode_username)
@@ -266,6 +293,16 @@ async def smart_nudge_job():
                         f"There's still time before midnight! 💪\n\n"
                         f"Keep your streak alive! 🔥"
                     )
+                    messages_sent += 1
+                    # Add delay between DMs to avoid rate limiting
+                    await asyncio.sleep(1.5)
+            except discord.errors.HTTPException as e:
+                if e.status == 429:  # Rate limited
+                    retry_after = getattr(e, 'retry_after', 5)
+                    print(f"Rate limited on nudge, waiting {retry_after} seconds...")
+                    await asyncio.sleep(retry_after + 1)
+                else:
+                    print(f"Could not send nudge to {discord_id}: {e}")
             except Exception as e:
                 print(f"Could not send nudge to {discord_id}: {e}")
 
