@@ -64,6 +64,63 @@ bot = commands.Bot(command_prefix='!',intents = intents)
 scheduler = AsyncIOScheduler()
 
 ist = pytz.timezone("Asia/Kolkata")
+MESSAGE_CHUNK_LIMIT = 1800
+MIN_SEND_INTERVAL = 1.0
+MAX_SEND_RETRIES = 5
+_rate_limit_state = {"lock": None, "next_allowed": 0.0}
+
+
+async def safe_send(send_callable, *args, **kwargs):
+    """Serialize Discord sends with retries so we respect global rate limits."""
+    loop = asyncio.get_running_loop()
+    if _rate_limit_state["lock"] is None:
+        _rate_limit_state["lock"] = asyncio.Lock()
+    lock = _rate_limit_state["lock"]
+
+    for attempt in range(1, MAX_SEND_RETRIES + 1):
+        async with lock:
+            wait_time = max(0.0, _rate_limit_state["next_allowed"] - loop.time())
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
+
+        try:
+            result = await send_callable(*args, **kwargs)
+            async with lock:
+                _rate_limit_state["next_allowed"] = loop.time() + MIN_SEND_INTERVAL
+            return result
+        except discord.errors.HTTPException as e:
+            if e.status != 429:
+                raise
+            retry_after = getattr(e, "retry_after", MIN_SEND_INTERVAL * attempt)
+            print(f"Rate limited by Discord (attempt {attempt}/{MAX_SEND_RETRIES}), waiting {retry_after:.2f}s")
+            async with lock:
+                _rate_limit_state["next_allowed"] = loop.time() + retry_after
+            await asyncio.sleep(retry_after + 0.5)
+        except Exception as e:
+            if attempt == MAX_SEND_RETRIES:
+                raise e
+            await asyncio.sleep(MIN_SEND_INTERVAL * attempt)
+
+    raise RuntimeError("safe_send exhausted retries")
+
+
+def chunk_messages(messages, limit=MESSAGE_CHUNK_LIMIT):
+    """Group multiple announcement strings into Discord-safe chunks."""
+    chunk = ""
+    for message in messages:
+        entry = message.strip()
+        if not entry:
+            continue
+        addition = entry + "\n\n"
+        if len(chunk) + len(addition) > limit and chunk:
+            yield chunk.strip()
+            chunk = addition
+        else:
+            chunk += addition
+
+    if chunk.strip():
+        yield chunk.strip()
+
 
 async def daily_check():
     channel = bot.get_channel(get_announcement_channel_id())
@@ -72,16 +129,16 @@ async def daily_check():
         print("Channel not found")
         return
 
-    await channel.send("📊 **Daily LeetCode Status Check**")
+    await safe_send(channel.send, "📊 **Daily LeetCode Status Check**")
 
     for discord_id, leetcode_username in user_registry.items():
         solved = has_user_solved_today(leetcode_username)
 
         mention = f"<@{discord_id}>"
         if solved:
-            await channel.send(f"✅ {mention} is safe today!")
+            await safe_send(channel.send, f"✅ {mention} is safe today!")
         else:
-            await channel.send(f"❌ {mention} did NOT solve today!")
+            await safe_send(channel.send, f"❌ {mention} did NOT solve today!")
 
 
 async def streak_update():
@@ -113,13 +170,13 @@ async def streak_update():
                 # Update longest streak
                 update_longest_streak(streak_registry, discord_id)
                 mention = f"<@{discord_id}>"
-                await channel.send(f"✅ {mention} is on {streak}🔥 streak!")
+                await safe_send(channel.send, f"✅ {mention} is on {streak}🔥 streak!")
             else:
                 streak_registry[discord_id]["streak"] = 0
                 streak_registry[discord_id]["last_checked_date"] = today
                 streak = streak_registry[discord_id]["streak"]
                 mention = f"<@{discord_id}>"
-                await channel.send(f"Oops! {mention} forgot to solve today. The streak is now {streak}🔥")
+                await safe_send(channel.send, f"Oops! {mention} forgot to solve today. The streak is now {streak}🔥")
     save_streak(streak_registry)
 
 
@@ -189,7 +246,7 @@ async def submission_check_job():
         await asyncio.sleep(0.5)  # Small delay between API calls
 
     data = load_announcements()
-    messages_sent = 0
+    announcement_messages = []
 
     for discord_id, solves in data.items():
         new_solves = [
@@ -238,43 +295,25 @@ async def submission_check_job():
             else:
                 lines.append(f"- {s['title']}")
 
-        # Send message with rate limit handling
-        try:
-            await channel.send(
-                f"🔥 {mention} solved {len(new_problems)} problem(s)!\n" + "\n".join(lines)
-            )
-            messages_sent += 1
-            
-            # Add delay between messages to avoid rate limiting
-            if messages_sent % 5 == 0:
-                await asyncio.sleep(2)  # Longer pause every 5 messages
-            else:
-                await asyncio.sleep(1)  # 1 second delay between messages
-                
-        except discord.errors.HTTPException as e:
-            if e.status == 429:  # Rate limited
-                retry_after = getattr(e, 'retry_after', 5)
-                print(f"Rate limited, waiting {retry_after} seconds...")
-                await asyncio.sleep(retry_after + 1)
-                # Retry once after waiting
-                try:
-                    await channel.send(
-                        f"🔥 {mention} solved {len(new_problems)} problem(s)!\n" + "\n".join(lines)
-                    )
-                except Exception as retry_error:
-                    print(f"Failed to send after retry: {retry_error}")
-            else:
-                print(f"Failed to send announcement: {e}")
+        announcement_messages.append(
+            f"🔥 {mention} solved {len(new_problems)} problem(s)!\n" + "\n".join(lines)
+        )
 
         for s in new_problems:
             s["announced"] = True
 
     save_announcements(data)
 
+    for chunk in chunk_messages(announcement_messages):
+        try:
+            await safe_send(channel.send, chunk)
+        except Exception as e:
+            print(f"Failed to send announcement chunk: {e}")
+            break
+
 
 async def smart_nudge_job():
     """Send DM to users who haven't solved by 9 PM IST"""
-    messages_sent = 0
     for discord_id, leetcode_username in user_registry.items():
         # Retry logic for API reliability
         solved = has_user_solved_today(leetcode_username)
@@ -287,15 +326,13 @@ async def smart_nudge_job():
             try:
                 user = await bot.fetch_user(int(discord_id))
                 if user:
-                    await user.send(
+                    await safe_send(
+                        user.send,
                         f"⏰ **Friendly Reminder!**\n\n"
                         f"Hey! You haven't solved any LeetCode problem today yet.\n"
                         f"There's still time before midnight! 💪\n\n"
                         f"Keep your streak alive! 🔥"
                     )
-                    messages_sent += 1
-                    # Add delay between DMs to avoid rate limiting
-                    await asyncio.sleep(1.5)
             except discord.errors.HTTPException as e:
                 if e.status == 429:  # Rate limited
                     retry_after = getattr(e, 'retry_after', 5)
@@ -309,9 +346,6 @@ async def smart_nudge_job():
 
 def get_current_week_start():
     """Get the Monday that starts the current week (IST timezone)"""
-    ist = pytz.timezone("Asia/Kolkata")
-    today = datetime.now(ist).date()
-    # weekday() returns 0 for Monday, 6 for Sunday
     days_since_monday = today.weekday()
     current_week_start = today - timedelta(days=days_since_monday)
     return current_week_start
@@ -398,7 +432,7 @@ async def weekly_reset_job():
     if channel:
         weekly = load_weekly()
         if weekly["data"]:
-            await channel.send("🔄 Weekly leaderboard has been reset! Good luck this week! 💪")
+            await safe_send(channel.send, "🔄 Weekly leaderboard has been reset! Good luck this week! 💪")
     reset_weekly()
     print("Weekly leaderboard reset")
 
@@ -434,7 +468,7 @@ async def weekly_recap_job():
     
     msg += "\nKeep grinding! 💪"
     
-    await channel.send(msg)
+    await safe_send(channel.send, msg)
 
 
 def scheduled_job():
@@ -500,7 +534,7 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member):
-    await member.send(f"Welcome to the server {member.name}")
+    await safe_send(member.send, f"Welcome to the server {member.name}")
 
 @bot.event
 async def on_message(message):
@@ -509,7 +543,7 @@ async def on_message(message):
     
     if "shit" in message.content.lower():
         await message.delete()
-        await message.channel.send(f"{message.author.mention}- Hey, dont use that word! ")
+        await safe_send(message.channel.send, f"{message.author.mention}- Hey, dont use that word! ")
     
     await bot.process_commands(message)
 
